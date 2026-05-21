@@ -8,7 +8,7 @@ mod style;
 #[command(version, about, long_about = None)]
 struct Cli {
     /// Path of directory or file to remove
-    path: PathBuf,
+    path: Vec<PathBuf>,
 
     /// Print every deleted item in separate line
     #[arg(short, long)]
@@ -17,25 +17,46 @@ struct Cli {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let p = PathBuf::from(cli.path);
-    if p.is_dir() {
-        let mpb = MultiProgress::new();
-        let spinner = mpb.add(style::themed_spinner()).with_message("Analyzing...");
-        spinner.enable_steady_tick(Duration::from_millis(100));
-        let entry_count = count_dir(&p)? + 1;
-        let pb = mpb.add(style::themed_progressbar_no_msg(entry_count as u64));
-        full_remove_dir(&p, &pb, &spinner, cli.verbose, &mpb)?;
-        pb.finish();
-        spinner.finish_with_message("Finished");
-    }
-    else {
-        fs::remove_file(&p)?;
-        let pfname = p.file_name();
-        match pfname {
-            Some(n) => println!("Removed file {}", n.to_string_lossy()),
-            None => println!("Removed file")
+    let mpb = MultiProgress::new();
+    let countpb = mpb.add(style::themed_progressbar(cli.path.len() as u64).with_message("Deleting"));
+
+    for ipath in cli.path
+    {
+        match ipath.file_name() {
+            Some(n) => countpb.set_message(format!("Deleting {}", n.to_string_lossy())),
+            None => countpb.set_message("Deleting")
         }
+        let p = PathBuf::from(ipath);
+        if p.is_dir() {
+            let spinner = mpb.add(style::themed_spinner()).with_message("Analyzing...");
+            spinner.enable_steady_tick(Duration::from_millis(100));
+            let entry_count = count_dir(&p)? + 1;
+            let pb = mpb.add(style::themed_progressbar_no_msg(entry_count as u64));
+            full_remove_dir(&p, &pb, &spinner, cli.verbose, &mpb)?;
+            pb.finish_and_clear();
+            spinner.finish_with_message("Finished");
+            spinner.finish_and_clear();
+        }
+        else {
+            let pfname = p.file_name();
+            let spinner = mpb.add(style::themed_spinner());
+            match pfname {
+                Some(n) => spinner.set_message(format!("Deleting {}...", n.to_string_lossy())),
+                None => spinner.set_message("Deleting file...")
+            }
+            fs::remove_file(&p)?;
+            if cli.verbose {
+                match pfname {
+                    Some(n) => mpb.println(format!("Removed file {}", n.to_string_lossy()))?,
+                    None => mpb.println("Removed file")?
+                }
+            }
+            spinner.finish_and_clear();
+        }
+        countpb.inc(1);
     }
+    countpb.finish_with_message("Done");
+
     Ok(())
 }
 
