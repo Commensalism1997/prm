@@ -106,7 +106,7 @@ fn full_remove_dir(path: &Path, pb: &ProgressBar, spinner: &ProgressBar, verbose
         }
         None => spinner.set_message("Removing directory...")
     }
-    fs::remove_dir(path)?;
+    fs::remove_dir_all(path)?;
     pb.inc(1);
     Ok(())
 }
