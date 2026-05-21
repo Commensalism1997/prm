@@ -18,13 +18,13 @@ struct Cli {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mpb = MultiProgress::new();
-    let countpb = mpb.add(style::themed_progressbar(cli.path.len() as u64).with_message("Deleting"));
+    let countpb = mpb.add(style::themed_progressbar(cli.path.len() as u64).with_message("Deleting..."));
 
     for ipath in cli.path
     {
         match ipath.file_name() {
-            Some(n) => countpb.set_message(format!("Deleting {}", n.to_string_lossy())),
-            None => countpb.set_message("Deleting")
+            Some(n) => countpb.set_message(format!("Deleting {}...", n.to_string_lossy())),
+            None => countpb.set_message("Deleting...")
         }
         let p = PathBuf::from(ipath);
         if p.is_dir() {
@@ -85,7 +85,7 @@ fn full_remove_dir(path: &Path, pb: &ProgressBar, spinner: &ProgressBar, verbose
             dirs.push(e);
             continue;
         }
-        spinner.set_message(format!("Removing file {}", e.file_name().to_string_lossy()));
+        spinner.set_message(format!("Removing file {}...", e.file_name().to_string_lossy()));
         fs::remove_file(e.path())?;
         pb.inc(1);
         if verbose { mpb.println(format!("Removed file {}", e.file_name().to_string_lossy()))?; }
@@ -93,10 +93,10 @@ fn full_remove_dir(path: &Path, pb: &ProgressBar, spinner: &ProgressBar, verbose
     let pfname = path.file_name();
     match pfname {
         Some(n) => {
-            spinner.set_message(format!("Removing dir {}", n.to_string_lossy()));
-            if verbose { mpb.println(format!("Removed dir {}", n.to_string_lossy()))?; }
+            spinner.set_message(format!("Removing directory {}...", n.to_string_lossy()));
+            if verbose { mpb.println(format!("Removed directory {}", n.to_string_lossy()))?; }
         }
-        None => spinner.set_message("Removing dir")
+        None => spinner.set_message("Removing directory...")
     }
     fs::remove_dir(path)?;
     pb.inc(1);
