@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let spinner = mpb.add(style::themed_spinner()).with_message("Analyzing...");
         spinner.enable_steady_tick(Duration::from_millis(100));
         let entry_count = count_dir(&p)? + 1;
-        let pb = mpb.add(style::themed_progressbar(entry_count as u64));
+        let pb = mpb.add(style::themed_progressbar_no_msg(entry_count as u64));
         full_remove_dir(&p, &pb, &spinner, cli.verbose, &mpb)?;
         pb.finish();
         spinner.finish_with_message("Finished");
