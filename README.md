@@ -5,7 +5,7 @@
 ## Syntax
 
 ```bash
-prm <PATH> [-v]
+prm [-v] <PATH>...
 ```
 It will work on both files and directories, with progress bar obviously being only visible on the latter. `-v` will print out every deleted file much like `rm -v`.
 
