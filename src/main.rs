@@ -22,6 +22,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for ipath in cli.path
     {
+        if !fs::exists(&ipath)? {
+            match ipath.file_name() {
+                Some(n) => mpb.println(format!("{} does not exist, skipping", n.to_string_lossy()))?,
+                None => mpb.println("Entry does not exist, skipping")?
+            }
+            countpb.set_length(countpb.length().expect("Total bar should have a length") - 1);
+            continue;
+        }
         match ipath.file_name() {
             Some(n) => countpb.set_message(format!("Deleting {}...", n.to_string_lossy())),
             None => countpb.set_message("Deleting...")
