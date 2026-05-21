@@ -1,8 +1,13 @@
-const DPROGTEMP: &str = "{msg:.7}  [{elapsed_precise:.8}] {wide_bar:.red/8} {human_pos}/{human_len} {percent}%  [{eta:.7}]";
+const DPROGTEMP: &str = " {msg:.7}  [{elapsed_precise:.8}] {wide_bar:.red/8} {human_pos}/{human_len} {percent}%  [{eta:.7}] ";
+const DPROGTEMPNOMSG: &str = " [{elapsed_precise:.8}] {wide_bar:.red/8} {human_pos}/{human_len} {percent}%  [{eta:.7}] ";
 const DPROGCHARS: &str = "▒█░";
 
 pub fn themed_progressbar(len: u64) -> indicatif::ProgressBar {
     indicatif::ProgressBar::new(len).with_style(indicatif::ProgressStyle::with_template(DPROGTEMP).unwrap().progress_chars(DPROGCHARS))
+}
+
+pub fn themed_progressbar_no_msg(len: u64) -> indicatif::ProgressBar {
+    indicatif::ProgressBar::new(len).with_style(indicatif::ProgressStyle::with_template(DPROGTEMPNOMSG).unwrap().progress_chars(DPROGCHARS))
 }
 
 pub fn themed_spinner() -> indicatif::ProgressBar {
