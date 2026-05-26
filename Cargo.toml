@@ -2,7 +2,7 @@
 name = "prm"
 version = "0.1.0"
 authors = ["Commensalism"]
-description = "CLI utility for removing directories with a progress bar"
+description = "CLI utility for asynchronously removing directories with a progress bar"
 readme = "README.md"
 repository = "https://github.com/Commensalism1997/prm"
 license = "GPL-3.0-or-later"
