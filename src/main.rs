@@ -1,4 +1,6 @@
-use std::{fs, path::{Path, PathBuf}, process::ExitCode, time::Duration};
+use std::{ffi::{OsString}, path::{Path, PathBuf}, pin::Pin, process::ExitCode, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
+use futures::future::{join_all};
+use tokio::{fs, io, task::{self, JoinHandle}};
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar};
 
@@ -15,16 +17,18 @@ struct Cli {
     verbose: bool
 }
 
-fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    let mpb = MultiProgress::new();
+#[tokio::main]
+async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let cli: Cli = Cli::parse();
+    let mpb = Arc::new(MultiProgress::new());
     let countpb = mpb.add(style::themed_progressbar(cli.path.len() as u64).with_message("Deleting..."));
-    let mut success = true;
+    let mut handler: Vec<JoinHandle<Result<(), io::Error>>> = Vec::new();
+    let success = Arc::new(AtomicBool::new(true));
 
     for ipath in cli.path
     {
-        if !fs::exists(&ipath)? {
-            success = false;
+        if !fs::try_exists(&ipath).await? {
+            success.store(false, Ordering::SeqCst);
             match ipath.file_name() {
                 Some(n) => mpb.println(format!("{} does not exist, skipping", n.to_string_lossy()))?,
                 None => mpb.println("Entry does not exist, skipping")?
@@ -32,83 +36,130 @@ fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
             countpb.set_length(countpb.length().expect("Total bar should have a length") - 1);
             continue;
         }
-        match ipath.file_name() {
-            Some(n) => countpb.set_message(format!("Deleting {}...", n.to_string_lossy())),
-            None => countpb.set_message("Deleting...")
-        }
         let p = PathBuf::from(ipath);
         if p.is_dir() {
             let spinner = mpb.add(style::themed_spinner()).with_message("Analyzing...");
             spinner.enable_steady_tick(Duration::from_millis(100));
-            let entry_count = count_dir(&p)? + 1;
+            let entry_count = count_dir(&p).await? + 1;
             let pb = mpb.add(style::themed_progressbar_no_msg(entry_count as u64));
-            full_remove_dir(&p, &pb, &spinner, cli.verbose, &mpb)?;
-            pb.finish_and_clear();
-            spinner.finish_with_message("Finished");
-            spinner.finish_and_clear();
+            handler.push(task::spawn(full_remove_dir(p, pb, spinner, cli.verbose, mpb.clone())));
         }
         else {
             let pfname = p.file_name();
             let spinner = mpb.add(style::themed_spinner());
             match pfname {
-                Some(n) => spinner.set_message(format!("Deleting {}...", n.to_string_lossy())),
-                None => spinner.set_message("Deleting file...")
-            }
-            fs::remove_file(&p)?;
-            if cli.verbose {
-                match pfname {
-                    Some(n) => mpb.println(format!("Removed file {}", n.to_string_lossy()))?,
-                    None => mpb.println("Removed file")?
+                Some(n) => {
+                    spinner.set_message(format!("Deleting {}...", n.to_string_lossy()));
+                    handler.push(task::spawn(async_remove_file(p.clone(), cli.verbose, Some(n.to_owned()), spinner, mpb.clone())));
+                }
+                None => {
+                    spinner.set_message("Deleting file...");
+                    handler.push(task::spawn(async_remove_file(p.clone(), cli.verbose, None, spinner, mpb.clone())));
                 }
             }
-            spinner.finish_and_clear();
+        }
+    }
+    let wrapped_handler = handler.into_iter().map(|f| async {
+        match f.await.unwrap() {
+            Ok(_v) => (),
+            Err(e) => {
+                success.store(false, Ordering::SeqCst);
+                mpb.suspend(|| eprintln!("{}", e));
+            }
         }
         countpb.inc(1);
-    }
+    });
+    join_all(wrapped_handler).await;
     countpb.finish_with_message("Done");
 
-    Ok(if success { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    Ok(if success.load(Ordering::SeqCst) { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
-fn count_dir(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
-    let readdir = fs::read_dir(path)?;
-    let mut count: usize = 0;
-    for e in readdir {
-        let e = e?;
-        if e.file_type()?.is_dir() {
-            let n = count_dir(&e.path())?;
-            count += n + 1;
-            continue;
+fn count_dir<'a>(path: &'a Path) -> Pin<Box<dyn Future<Output = io::Result<usize>> + 'a>> {
+    Box::pin(async move {
+        let mut reader = fs::read_dir(path).await?;
+        let mut count: usize = 0;
+        while let Some(e) = reader.next_entry().await? {
+            if e.file_type().await?.is_dir() {
+                let n = count_dir(&e.path()).await?;
+                count += n + 1;
+                continue;
+            }
+            count += 1;
         }
-        count += 1;
-    }
-    Ok(count)
+        Ok(count)
+    })
 }
 
-fn full_remove_dir(path: &Path, pb: &ProgressBar, spinner: &ProgressBar, verbose: bool, mpb: &MultiProgress) -> Result<(), Box<dyn std::error::Error>> {
-    let readdir = fs::read_dir(path)?;
-    let mut dirs: Vec<fs::DirEntry> = Vec::new();
-    for e in readdir {
-        let e = e?;
-        if e.file_type()?.is_dir() {
-            full_remove_dir(&e.path(), pb, spinner, verbose, mpb)?;
-            dirs.push(e);
-            continue;
+async fn async_remove_file(p: PathBuf, verbose: bool, pfname: Option<OsString>, spinner: ProgressBar, mpb: Arc<MultiProgress>) -> io::Result<()> {
+    fs::remove_file(p).await?;
+    if verbose {
+        match pfname {
+            Some(n) => mpb.println(format!("Removed file {}", n.to_string_lossy()))?,
+            None => mpb.println("Removed file")?
         }
-        spinner.set_message(format!("Removing file {}...", e.file_name().to_string_lossy()));
-        fs::remove_file(e.path())?;
-        pb.inc(1);
-        if verbose { mpb.println(format!("Removed file {}", e.file_name().to_string_lossy()))?; }
     }
-    let pfname = path.file_name();
-    match pfname {
-        Some(n) => {
-            spinner.set_message(format!("Removing directory {}...", n.to_string_lossy()));
-            if verbose { mpb.println(format!("Removed directory {}", n.to_string_lossy()))?; }
-        }
-        None => spinner.set_message("Removing directory...")
-    }
-    fs::remove_dir_all(path)?;
-    pb.inc(1);
+    spinner.finish_and_clear();
     Ok(())
+}
+
+fn prev_remove_dir<'a>(path: &'a Path, pb: &'a ProgressBar, spinner: &'a ProgressBar, verbose: bool, mpb: &'a MultiProgress) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut reader = fs::read_dir(path).await?;
+        let mut dirs: Vec<fs::DirEntry> = Vec::new();
+        while let Some(e) = reader.next_entry().await? {
+            if e.file_type().await?.is_dir() {
+                prev_remove_dir(&e.path(), pb, spinner, verbose, mpb).await?;
+                dirs.push(e);
+                continue;
+            }
+            spinner.set_message(format!("Removing file {}...", e.file_name().to_string_lossy()));
+            fs::remove_file(e.path()).await?;
+            pb.inc(1);
+            if verbose { mpb.println(format!("Removed file {}", e.file_name().to_string_lossy()))?; }
+        }
+        let pfname = path.file_name();
+        match pfname {
+            Some(n) => {
+                spinner.set_message(format!("Removing directory {}...", n.to_string_lossy()));
+                if verbose { mpb.println(format!("Removed directory {}", n.to_string_lossy()))?; }
+            }
+            None => spinner.set_message("Removing directory...")
+        }
+        fs::remove_dir_all(path).await?;
+        pb.inc(1);
+        Ok(())
+    })
+}
+
+fn full_remove_dir<'a>(path: PathBuf, pb: ProgressBar, spinner: ProgressBar, verbose: bool, mpb: Arc<MultiProgress>) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut reader = fs::read_dir(&path).await?;
+        let mut dirs: Vec<fs::DirEntry> = Vec::new();
+        while let Some(e) = reader.next_entry().await? {
+            if e.file_type().await?.is_dir() {
+                prev_remove_dir(&e.path(), &pb, &spinner, verbose, &mpb).await?;
+                dirs.push(e);
+                continue;
+            }
+            spinner.set_message(format!("Removing file {}...", e.file_name().to_string_lossy()));
+            fs::remove_file(e.path()).await?;
+            pb.inc(1);
+            if verbose { mpb.println(format!("Removed file {}", e.file_name().to_string_lossy()))?; }
+        }
+        let pfname = path.file_name();
+        match pfname {
+            Some(n) => {
+                spinner.set_message(format!("Removing directory {}...", n.to_string_lossy()));
+                if verbose { mpb.println(format!("Removed directory {}", n.to_string_lossy()))?; }
+            }
+            None => spinner.set_message("Removing directory...")
+        }
+        fs::remove_dir_all(path).await?;
+        pb.inc(1);
+        pb.finish_and_clear();
+        spinner.finish_with_message("Finished");
+        spinner.finish_and_clear();
+        Ok(())
+    })
 }

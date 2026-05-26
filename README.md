@@ -11,6 +11,13 @@ It will work on both files and directories, with progress bar obviously being on
 
 ## Installation
 
+Provided you have cargo and have .cargo/bin in $PATH:
+
 ```bash
-cargo install --git https://github.com/Commensalism1997/prm # Provided you have cargo and have .cargo/bin in $PATH
+cargo install --git https://github.com/Commensalism1997/prm.git
+```
+
+Async ver. (EXPERIMENTAL):
+```bash
+cargo install --git https://github.com/Commensalism1997/prm.git --branch async
 ```
