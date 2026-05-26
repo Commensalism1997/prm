@@ -1,4 +1,4 @@
-use std::{fs, path::{Path, PathBuf}, time::Duration};
+use std::{fs, path::{Path, PathBuf}, process::ExitCode, time::Duration};
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar};
 
@@ -15,14 +15,16 @@ struct Cli {
     verbose: bool
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mpb = MultiProgress::new();
     let countpb = mpb.add(style::themed_progressbar(cli.path.len() as u64).with_message("Deleting..."));
+    let mut success = true;
 
     for ipath in cli.path
     {
         if !fs::exists(&ipath)? {
+            success = false;
             match ipath.file_name() {
                 Some(n) => mpb.println(format!("{} does not exist, skipping", n.to_string_lossy()))?,
                 None => mpb.println("Entry does not exist, skipping")?
@@ -65,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     countpb.finish_with_message("Done");
 
-    Ok(())
+    Ok(if success { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 fn count_dir(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
