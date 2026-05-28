@@ -47,16 +47,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         else {
             let pfname = p.file_name();
             let spinner = mpb.add(style::themed_spinner());
-            match pfname {
-                Some(n) => {
-                    spinner.set_message(format!("Deleting {}...", n.to_string_lossy()));
-                    handler.push(task::spawn(async_remove_file(p.clone(), cli.verbose, Some(n.to_owned()), spinner, mpb.clone())));
-                }
-                None => {
-                    spinner.set_message("Deleting file...");
-                    handler.push(task::spawn(async_remove_file(p.clone(), cli.verbose, None, spinner, mpb.clone())));
-                }
-            }
+            handler.push(task::spawn(async_remove_file(p.clone(), cli.verbose, pfname.map(|f| f.to_owned()), spinner, mpb.clone())));
         }
     }
     let wrapped_handler = handler.into_iter().map(|f| async {
