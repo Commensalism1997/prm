@@ -36,18 +36,17 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
             countpb.set_length(countpb.length().expect("Total bar should have a length") - 1);
             continue;
         }
-        let p = PathBuf::from(ipath);
-        if p.is_dir() {
+        if ipath.is_dir() {
             let spinner = mpb.add(style::themed_spinner()).with_message("Analyzing...");
             spinner.enable_steady_tick(Duration::from_millis(100));
-            let entry_count = count_dir(&p).await? + 1;
+            let entry_count = count_dir(&ipath).await? + 1;
             let pb = mpb.add(style::themed_progressbar_no_msg(entry_count as u64));
-            handler.push(task::spawn(full_remove_dir(p, pb, spinner, cli.verbose, mpb.clone())));
+            handler.push(task::spawn(full_remove_dir(ipath, pb, spinner, cli.verbose, mpb.clone())));
         }
         else {
-            let pfname = p.file_name();
+            let pfname = ipath.file_name();
             let spinner = mpb.add(style::themed_spinner());
-            handler.push(task::spawn(async_remove_file(p.clone(), cli.verbose, pfname.map(|f| f.to_owned()), spinner, mpb.clone())));
+            handler.push(task::spawn(async_remove_file(ipath.clone(), cli.verbose, pfname.map(|f| f.to_owned()), spinner, mpb.clone())));
         }
     }
     let wrapped_handler = handler.into_iter().map(|f| async {
@@ -66,7 +65,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     Ok(if success.load(Ordering::SeqCst) { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
-fn count_dir<'a>(path: &'a Path) -> Pin<Box<dyn Future<Output = io::Result<usize>> + 'a>> {
+fn count_dir<'a>(path: &'a impl AsRef<Path>) -> Pin<Box<dyn Future<Output = io::Result<usize>> + 'a>> {
     Box::pin(async move {
         let mut reader = fs::read_dir(path).await?;
         let mut count: usize = 0;
@@ -82,7 +81,7 @@ fn count_dir<'a>(path: &'a Path) -> Pin<Box<dyn Future<Output = io::Result<usize
     })
 }
 
-async fn async_remove_file(p: PathBuf, verbose: bool, pfname: Option<OsString>, spinner: ProgressBar, mpb: Arc<MultiProgress>) -> io::Result<()> {
+async fn async_remove_file(p: impl AsRef<Path>, verbose: bool, pfname: Option<OsString>, spinner: ProgressBar, mpb: Arc<MultiProgress>) -> io::Result<()> {
     fs::remove_file(p).await?;
     if verbose {
         match pfname {
@@ -94,14 +93,12 @@ async fn async_remove_file(p: PathBuf, verbose: bool, pfname: Option<OsString>, 
     Ok(())
 }
 
-fn prev_remove_dir<'a>(path: &'a Path, pb: &'a ProgressBar, spinner: &'a ProgressBar, verbose: bool, mpb: &'a MultiProgress) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+fn prev_remove_dir<'a>(path: &'a (impl AsRef<Path> + Sync), pb: &'a ProgressBar, spinner: &'a ProgressBar, verbose: bool, mpb: &'a MultiProgress) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
     Box::pin(async move {
         let mut reader = fs::read_dir(path).await?;
-        let mut dirs: Vec<fs::DirEntry> = Vec::new();
         while let Some(e) = reader.next_entry().await? {
             if e.file_type().await?.is_dir() {
                 prev_remove_dir(&e.path(), pb, spinner, verbose, mpb).await?;
-                dirs.push(e);
                 continue;
             }
             spinner.set_message(format!("Removing file {}...", e.file_name().to_string_lossy()));
@@ -109,7 +106,7 @@ fn prev_remove_dir<'a>(path: &'a Path, pb: &'a ProgressBar, spinner: &'a Progres
             pb.inc(1);
             if verbose { mpb.println(format!("Removed file {}", e.file_name().to_string_lossy()))?; }
         }
-        let pfname = path.file_name();
+        let pfname = path.as_ref().file_name();
         match pfname {
             Some(n) => {
                 spinner.set_message(format!("Removing directory {}...", n.to_string_lossy()));
@@ -126,11 +123,9 @@ fn prev_remove_dir<'a>(path: &'a Path, pb: &'a ProgressBar, spinner: &'a Progres
 fn full_remove_dir<'a>(path: PathBuf, pb: ProgressBar, spinner: ProgressBar, verbose: bool, mpb: Arc<MultiProgress>) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
     Box::pin(async move {
         let mut reader = fs::read_dir(&path).await?;
-        let mut dirs: Vec<fs::DirEntry> = Vec::new();
         while let Some(e) = reader.next_entry().await? {
             if e.file_type().await?.is_dir() {
                 prev_remove_dir(&e.path(), &pb, &spinner, verbose, &mpb).await?;
-                dirs.push(e);
                 continue;
             }
             spinner.set_message(format!("Removing file {}...", e.file_name().to_string_lossy()));
