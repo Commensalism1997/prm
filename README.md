@@ -4,9 +4,12 @@
 
 ## Syntax
 
+### **WARNING: If `PATH` is a symlink to a directory, it will delete the linked directory's contents! It will not follow symlinks inside the directories being deleted or symlinks to files.**
+
 ```bash
 prm [-v] <PATH>...
 ```
+
 It will work on both files and directories, with progress bar obviously being only visible on the latter. `-v` will print out every deleted file much like `rm -v`.
 
 ## Installation
